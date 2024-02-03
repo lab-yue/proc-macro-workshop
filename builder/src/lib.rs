@@ -14,6 +14,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             let mut option_fields = vec![];
             let mut none_fields = vec![];
             let mut setters = vec![];
+            let mut build_checks = vec![];
 
             s.fields.iter().for_each(|f| {
                 let Some(ident) = f.ident.as_ref() else {
@@ -27,6 +28,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         self.#ident = Some(#ident);
                         self
                     }
+                ));
+
+                let expect = format!("expect {}", ident.to_string());
+
+                build_checks.push(quote!(
+                    #ident: self.#ident.take().ok_or(#expect)?
                 ));
             });
 
@@ -45,6 +52,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     }
                 }
                 impl #builder_ident {
+                    pub fn build(&mut self) -> Result<Command, Box<dyn std::error::Error>> {
+                        Ok(#input_ident {
+                            #(#build_checks),*
+                        })
+                    }
                     #(#setters)*
                 }
             );
