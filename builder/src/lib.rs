@@ -32,7 +32,8 @@ fn wrapped_ty_name<'t>(ty: &'t Type) -> Option<(String, &'t Type)> {
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    let builder_ident = Ident::new(&format!("{}Builder", &input.ident), input.span());
+    let input_span = input.span();
+    let builder_ident = Ident::new(&format!("{}Builder", &input.ident), input_span);
     let input_ident = input.ident;
 
     let gen = match &input.data {
@@ -42,31 +43,45 @@ pub fn derive(input: TokenStream) -> TokenStream {
             let mut setters = vec![];
             let mut build_checks = vec![];
 
-            s.fields.iter().for_each(|f| {
+            for f in &s.fields {
                 let Some(ident) = f.ident.as_ref() else {
-                    return;
+                    continue;
                 };
                 let ty = &f.ty;
 
-                let each = f.attrs.iter().find_map(|a| {
-                    if a.path().is_ident("builder") {
-                        let meta = a.parse_args::<Meta>().expect("invalid arg");
-                        match meta {
-                            Meta::NameValue(MetaNameValue {
-                                value:
-                                    Expr::Lit(ExprLit {
-                                        lit: Lit::Str(s), ..
-                                    }),
-                                path,
-                                ..
-                            }) if path.is_ident("each") => {
-                                return Some(s.parse::<Ident>().expect("should be ident"));
+                let each = match f
+                    .attrs
+                    .iter()
+                    .find_map(|a| {
+                        if a.path().is_ident("builder") {
+                            let meta = a.parse_args::<Meta>().expect("invalid arg");
+                            match meta {
+                                Meta::NameValue(MetaNameValue {
+                                    value:
+                                        Expr::Lit(ExprLit {
+                                            lit: Lit::Str(s), ..
+                                        }),
+                                    path,
+                                    ..
+                                }) if path.is_ident("each") => {
+                                    return Some(Ok(s.parse::<Ident>().expect("should be ident")));
+                                }
+                                _ => {
+                                    return Some(Err(syn::Error::new(
+                                        a.meta.span(),
+                                        r#"expected `builder(each = "...")`"#,
+                                    )
+                                    .to_compile_error()))
+                                }
                             }
-                            _ => return None,
                         }
-                    }
-                    None
-                });
+                        None
+                    })
+                    .transpose()
+                {
+                    Ok(inner) => inner,
+                    Err(err) => return err.into(),
+                };
 
                 match wrapped_ty_name(ty) {
                     Some((name, inner_ty)) if name == "Option" => {
@@ -114,7 +129,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         ));
                     }
                 }
-            });
+            }
 
             let _struct = quote!(
                 pub struct #builder_ident {
