@@ -13,6 +13,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         syn::Data::Struct(s) => {
             let mut option_fields = vec![];
             let mut none_fields = vec![];
+            let mut setters = vec![];
 
             s.fields.iter().for_each(|f| {
                 let Some(ident) = f.ident.as_ref() else {
@@ -21,6 +22,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 let ty = &f.ty;
                 option_fields.push(quote!( #ident: Option<#ty>));
                 none_fields.push(quote!( #ident: None));
+                setters.push(quote!(
+                    fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                        self.#ident = Some(#ident);
+                        self
+                    }
+                ));
             });
 
             let _struct = quote!(
@@ -36,6 +43,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
                             #(#none_fields),*
                         }
                     }
+                }
+                impl #builder_ident {
+                    #(#setters)*
                 }
             );
 
