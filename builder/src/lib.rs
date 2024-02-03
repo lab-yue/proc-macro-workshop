@@ -6,25 +6,27 @@ use syn::{
     Type, TypePath,
 };
 
-fn wrapped_ty_name<'t>(ty: &'t Type) -> Option<(String, &'t Type)> {
+fn wrapped_ty_name<'t>(ty: &'t Type) -> std::option::Option<(String, &'t Type)> {
     match ty {
         Type::Path(TypePath {
-            qself: None,
+            qself: std::option::Option::None,
             path: Path { segments, .. },
             ..
         }) => match segments.first() {
-            Some(PathSegment {
+            std::option::Option::Some(PathSegment {
                 ident,
                 arguments:
                     PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }),
                 ..
             }) => match args.first() {
-                Some(GenericArgument::Type(ty)) => Some((ident.to_string(), ty)),
-                _ => None,
+                std::option::Option::Some(GenericArgument::Type(ty)) => {
+                    std::option::Option::Some((ident.to_string(), ty))
+                }
+                _ => std::option::Option::None,
             },
-            _ => None,
+            _ => std::option::Option::None,
         },
-        _ => None,
+        _ => std::option::Option::None,
     }
 }
 
@@ -44,7 +46,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             let mut build_checks = vec![];
 
             for f in &s.fields {
-                let Some(ident) = f.ident.as_ref() else {
+                let std::option::Option::Some(ident) = f.ident.as_ref() else {
                     continue;
                 };
                 let ty = &f.ty;
@@ -64,10 +66,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                     path,
                                     ..
                                 }) if path.is_ident("each") => {
-                                    return Some(Ok(s.parse::<Ident>().expect("should be ident")));
+                                    return std::option::Option::Some(std::result::Result::Ok(
+                                        s.parse::<Ident>().expect("should be ident"),
+                                    ));
                                 }
                                 _ => {
-                                    return Some(Err(syn::Error::new(
+                                    return std::option::Option::Some(Err(syn::Error::new(
                                         a.meta.span(),
                                         r#"expected `builder(each = "...")`"#,
                                     )
@@ -75,21 +79,21 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                 }
                             }
                         }
-                        None
+                        std::option::Option::None
                     })
                     .transpose()
                 {
-                    Ok(inner) => inner,
+                    std::result::Result::Ok(inner) => inner,
                     Err(err) => return err.into(),
                 };
 
                 match wrapped_ty_name(ty) {
-                    Some((name, inner_ty)) if name == "Option" => {
+                    std::option::Option::Some((name, inner_ty)) if name == "Option" => {
                         option_fields.push(quote!( #ident: #ty));
-                        none_fields.push(quote!( #ident: None));
+                        none_fields.push(quote!( #ident: std::option::Option::None));
                         setters.push(quote!(
                             fn #ident(&mut self, #ident: #inner_ty) -> &mut Self {
-                                self.#ident = Some(#ident);
+                                self.#ident = std::option::Option::Some(#ident);
                                 self
                             }
                         ));
@@ -98,7 +102,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
                             #ident: self.#ident.to_owned()
                         ));
                     }
-                    Some((name, inner_ty)) if name == "Vec" && each.is_some() => {
+                    std::option::Option::Some((name, inner_ty))
+                        if name == "Vec" && each.is_some() =>
+                    {
                         let each_ident = each.as_ref().unwrap_or(ident);
                         option_fields.push(quote!( #ident: #ty));
                         none_fields.push(quote!( #ident: vec![]));
@@ -114,11 +120,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         ));
                     }
                     _ => {
-                        option_fields.push(quote!( #ident: Option<#ty>));
-                        none_fields.push(quote!( #ident: None));
+                        option_fields.push(quote!( #ident: std::option::Option<#ty>));
+                        none_fields.push(quote!( #ident: std::option::Option::None));
                         setters.push(quote!(
                             fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                                self.#ident = Some(#ident);
+                                self.#ident = std::option::Option::Some(#ident);
                                 self
                             }
                         ));
@@ -146,8 +152,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     }
                 }
                 impl #builder_ident {
-                    pub fn build(&mut self) -> Result<Command, Box<dyn std::error::Error>> {
-                        Ok(#input_ident {
+                    pub fn build(&mut self) -> std::result::Result<Command, std::boxed::Box<dyn std::error::Error>> {
+                        std::result::Result::Ok(#input_ident {
                             #(#build_checks),*
                         })
                     }
