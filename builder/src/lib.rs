@@ -1,6 +1,31 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, spanned::Spanned, DeriveInput, Ident};
+use syn::{
+    parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, DeriveInput,
+    GenericArgument, Ident, Path, PathArguments, PathSegment, Type, TypePath,
+};
+
+fn is_option(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Path(TypePath {
+            qself: None,
+            path: Path { segments, .. },
+            ..
+        }) => match segments.first() {
+            Some(PathSegment {
+                ident,
+                arguments:
+                    PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }),
+                ..
+            }) if ident.to_string() == "Option" => match args.first() {
+                Some(GenericArgument::Type(ty)) => Some(ty),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -21,20 +46,38 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     return;
                 };
                 let ty = &f.ty;
-                option_fields.push(quote!( #ident: Option<#ty>));
-                none_fields.push(quote!( #ident: None));
-                setters.push(quote!(
-                    fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                        self.#ident = Some(#ident);
-                        self
+                match is_option(ty) {
+                    Some(inner_ty) => {
+                        option_fields.push(quote!( #ident: #ty));
+                        none_fields.push(quote!( #ident: None));
+                        setters.push(quote!(
+                            fn #ident(&mut self, #ident: #inner_ty) -> &mut Self {
+                                self.#ident = Some(#ident);
+                                self
+                            }
+                        ));
+
+                        build_checks.push(quote!(
+                            #ident: self.#ident.to_owned()
+                        ));
                     }
-                ));
+                    None => {
+                        option_fields.push(quote!( #ident: Option<#ty>));
+                        none_fields.push(quote!( #ident: None));
+                        setters.push(quote!(
+                            fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                                self.#ident = Some(#ident);
+                                self
+                            }
+                        ));
 
-                let expect = format!("expect {}", ident.to_string());
+                        let expect = format!("expect {}", ident.to_string());
 
-                build_checks.push(quote!(
-                    #ident: self.#ident.take().ok_or(#expect)?
-                ));
+                        build_checks.push(quote!(
+                            #ident: self.#ident.take().ok_or(#expect)?
+                        ));
+                    }
+                }
             });
 
             let _struct = quote!(
