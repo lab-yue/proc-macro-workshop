@@ -1,11 +1,12 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, DeriveInput,
-    GenericArgument, Ident, Path, PathArguments, PathSegment, Type, TypePath,
+    parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, DeriveInput, Expr,
+    ExprLit, GenericArgument, Ident, Lit, Meta, MetaNameValue, Path, PathArguments, PathSegment,
+    Type, TypePath,
 };
 
-fn is_option(ty: &Type) -> Option<&Type> {
+fn wrapped_ty_name<'t>(ty: &'t Type) -> Option<(String, &'t Type)> {
     match ty {
         Type::Path(TypePath {
             qself: None,
@@ -17,8 +18,8 @@ fn is_option(ty: &Type) -> Option<&Type> {
                 arguments:
                     PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }),
                 ..
-            }) if ident.to_string() == "Option" => match args.first() {
-                Some(GenericArgument::Type(ty)) => Some(ty),
+            }) => match args.first() {
+                Some(GenericArgument::Type(ty)) => Some((ident.to_string(), ty)),
                 _ => None,
             },
             _ => None,
@@ -27,7 +28,7 @@ fn is_option(ty: &Type) -> Option<&Type> {
     }
 }
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -46,8 +47,29 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     return;
                 };
                 let ty = &f.ty;
-                match is_option(ty) {
-                    Some(inner_ty) => {
+
+                let each = f.attrs.iter().find_map(|a| {
+                    if a.path().is_ident("builder") {
+                        let meta = a.parse_args::<Meta>().expect("invalid arg");
+                        match meta {
+                            Meta::NameValue(MetaNameValue {
+                                value:
+                                    Expr::Lit(ExprLit {
+                                        lit: Lit::Str(s), ..
+                                    }),
+                                path,
+                                ..
+                            }) if path.is_ident("each") => {
+                                return Some(s.parse::<Ident>().expect("should be ident"));
+                            }
+                            _ => return None,
+                        }
+                    }
+                    None
+                });
+
+                match wrapped_ty_name(ty) {
+                    Some((name, inner_ty)) if name == "Option" => {
                         option_fields.push(quote!( #ident: #ty));
                         none_fields.push(quote!( #ident: None));
                         setters.push(quote!(
@@ -61,7 +83,22 @@ pub fn derive(input: TokenStream) -> TokenStream {
                             #ident: self.#ident.to_owned()
                         ));
                     }
-                    None => {
+                    Some((name, inner_ty)) if name == "Vec" && each.is_some() => {
+                        let each_ident = each.as_ref().unwrap_or(ident);
+                        option_fields.push(quote!( #ident: #ty));
+                        none_fields.push(quote!( #ident: vec![]));
+                        setters.push(quote!(
+                            fn #each_ident(&mut self, #each_ident: #inner_ty) -> &mut Self {
+                                self.#ident.push(#each_ident);
+                                self
+                            }
+                        ));
+
+                        build_checks.push(quote!(
+                            #ident: self.#ident.to_owned()
+                        ));
+                    }
+                    _ => {
                         option_fields.push(quote!( #ident: Option<#ty>));
                         none_fields.push(quote!( #ident: None));
                         setters.push(quote!(
@@ -72,7 +109,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         ));
 
                         let expect = format!("expect {}", ident.to_string());
-
                         build_checks.push(quote!(
                             #ident: self.#ident.take().ok_or(#expect)?
                         ));
