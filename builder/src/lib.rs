@@ -56,35 +56,36 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     .iter()
                     .find_map(|a| {
                         if a.path().is_ident("builder") {
-                            let meta = a.parse_args::<Meta>().expect("invalid arg");
-                            match meta {
-                                Meta::NameValue(MetaNameValue {
-                                    value:
-                                        Expr::Lit(ExprLit {
-                                            lit: Lit::Str(s), ..
-                                        }),
-                                    path,
-                                    ..
-                                }) if path.is_ident("each") => {
-                                    return std::option::Option::Some(std::result::Result::Ok(
-                                        s.parse::<Ident>().expect("should be ident"),
-                                    ));
-                                }
-                                _ => {
-                                    return std::option::Option::Some(Err(syn::Error::new(
-                                        a.meta.span(),
-                                        r#"expected `builder(each = "...")`"#,
-                                    )
-                                    .to_compile_error()))
+                            if let std::result::Result::Ok(meta) = a.parse_args::<Meta>() {
+                                match meta {
+                                    Meta::NameValue(MetaNameValue {
+                                        value:
+                                            Expr::Lit(ExprLit {
+                                                lit: Lit::Str(s), ..
+                                            }),
+                                        path,
+                                        ..
+                                    }) if path.is_ident("each") => {
+                                        if let std::result::Result::Ok(ident) = s.parse::<Ident>() {
+                                            return std::option::Option::Some(
+                                                std::result::Result::Ok(ident),
+                                            );
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
-                        }
-                        std::option::Option::None
+                        };
+
+                        std::option::Option::Some(std::result::Result::Err(
+                            syn::Error::new(a.meta.span(), r#"expected `builder(each = "...")`"#)
+                                .to_compile_error(),
+                        ))
                     })
                     .transpose()
                 {
                     std::result::Result::Ok(inner) => inner,
-                    Err(err) => return err.into(),
+                    std::result::Result::Err(err) => return err.into(),
                 };
 
                 match wrapped_ty_name(ty) {
@@ -152,7 +153,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     }
                 }
                 impl #builder_ident {
-                    pub fn build(&mut self) -> std::result::Result<Command, std::boxed::Box<dyn std::error::Error>> {
+                    pub fn build(&mut self) -> std::result::Result<
+                        Command,
+                        std::boxed::Box<dyn std::error::Error
+                    >> {
                         std::result::Result::Ok(#input_ident {
                             #(#build_checks),*
                         })
