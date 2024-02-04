@@ -7,6 +7,27 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let ident_lit = input.ident.to_string();
     let ident = input.ident;
+    let bounds = input
+        .generics
+        .params
+        .iter()
+        .map(|ty| match ty {
+            syn::GenericParam::Lifetime(l) => l.to_token_stream(),
+            syn::GenericParam::Type(ty) => {
+                quote!(#ty: std::fmt::Debug)
+            }
+            syn::GenericParam::Const(c) => c.to_token_stream(),
+        })
+        .collect::<Vec<_>>();
+    let generics = input.generics;
+
+    let bound = if bounds.len() > 0 {
+        quote!(
+            <#(#bounds),*>
+        )
+    } else {
+        quote!()
+    };
 
     let fields = match &input.data {
         syn::Data::Struct(s) => s.fields.iter().filter_map(|f| {
@@ -43,8 +64,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
     };
 
     quote!(
-        impl std::fmt::Debug for #ident {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        impl #bound std::fmt::Debug for #ident #generics {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+            {
                 f.debug_struct(#ident_lit)
                     #(#fields)*
                     .finish()
