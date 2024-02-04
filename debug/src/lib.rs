@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, AngleBracketedGenericArguments, DeriveInput, ExprLit, GenericArgument, Lit,
-    MetaNameValue, Path, PathArguments, PathSegment, Type, TypePath,
+    Meta, MetaNameValue, Path, PathArguments, PathSegment, Type, TypePath,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -23,6 +23,33 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     generics.type_params().for_each(|ty| {
         associated.insert(ty.ident.to_string(), vec![]);
+    });
+
+    let custom_bound = input.attrs.iter().find_map(|attr| {
+        if attr.path().is_ident("debug") {
+            if let Ok(meta) = attr.parse_args::<Meta>() {
+                if let Ok(MetaNameValue {
+                    value:
+                        syn::Expr::Lit(ExprLit {
+                            lit: Lit::Str(lit_str),
+                            ..
+                        }),
+                    ..
+                }) = meta.require_name_value()
+                {
+                    return Some(
+                        lit_str
+                            .value()
+                            .parse::<proc_macro2::TokenStream>()
+                            .unwrap_or(
+                                syn::Error::new(lit_str.span(), "expect to be token stream")
+                                    .into_compile_error(),
+                            ),
+                    );
+                }
+            }
+        }
+        None
     });
 
     let mut fields = vec![];
@@ -58,7 +85,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     _ => {}
                 };
 
-                collect_associated_types(&f.ty, &mut associated);
+                if custom_bound.is_none() {
+                    collect_associated_types(&f.ty, &mut associated);
+                }
 
                 let display = match fmt {
                     Some(fmt) => quote!(&format_args!(#fmt, &self.#field_name)),
@@ -98,9 +127,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let (bound, type_generics) = if bounds.len() > 0 {
         (
-            quote!(
+            custom_bound.unwrap_or(quote!(
                     #(#bounds),*
-            ),
+            )),
             quote!(
                     <#(#types),*>
             ),
