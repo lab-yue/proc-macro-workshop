@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
@@ -15,7 +15,15 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     // Q: Are there any better options than String to link between Type vs TypeParam?
     let mut is_phantom_data = HashSet::<String>::new();
+    let mut associated = HashMap::<String, Vec<proc_macro2::TokenStream>>::new();
     let generics = input.generics;
+
+    let mut types = vec![];
+    let mut bounds = vec![];
+
+    generics.type_params().for_each(|ty| {
+        associated.insert(ty.ident.to_string(), vec![]);
+    });
 
     let mut fields = vec![];
     match &input.data {
@@ -50,6 +58,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     _ => {}
                 };
 
+                collect_associated_types(&f.ty, &mut associated);
+
                 let display = match fmt {
                     Some(fmt) => quote!(&format_args!(#fmt, &self.#field_name)),
                     None => quote!(&self.#field_name),
@@ -63,27 +73,44 @@ pub fn derive(input: TokenStream) -> TokenStream {
         syn::Data::Union(_) => unimplemented!(),
     };
 
-    let bounds = generics
-        .type_params()
-        .map(|ty| {
-            if is_phantom_data.contains(&ty.to_token_stream().to_string()) {
+    associated.retain(|_, v| !v.is_empty());
+
+    generics.params.iter().for_each(|ty| match ty {
+        syn::GenericParam::Lifetime(l) => types.push(l.to_token_stream()),
+        syn::GenericParam::Type(t) => {
+            let ty_ident = &t.ident;
+            types.push(quote!(#ty_ident));
+            let bound = if is_phantom_data.contains(&ty.to_token_stream().to_string()) {
                 quote!(PhantomData<#ty>: std::fmt::Debug)
+            } else if let Some(associated_list) = associated.remove(&ty_ident.to_string()) {
+                let associated_bounds = associated_list
+                    .into_iter()
+                    .map(|a| quote!(#a: std::fmt::Debug).into())
+                    .collect::<Vec<proc_macro2::TokenStream>>();
+                quote!(#(#associated_bounds),*)
             } else {
                 quote!(#ty: std::fmt::Debug)
-            }
-        })
-        .collect::<Vec<_>>();
+            };
+            bounds.push(bound);
+        }
+        syn::GenericParam::Const(c) => types.push(c.to_token_stream()),
+    });
 
-    let bound = if bounds.len() > 0 {
-        quote!(
-                #(#bounds),*
+    let (bound, type_generics) = if bounds.len() > 0 {
+        (
+            quote!(
+                    #(#bounds),*
+            ),
+            quote!(
+                    <#(#types),*>
+            ),
         )
     } else {
-        quote!()
+        (quote!(), quote!())
     };
 
     quote!(
-        impl #generics std::fmt::Debug for #ident #generics
+        impl #generics std::fmt::Debug for #ident #type_generics
         where
             #bound
         {
@@ -123,4 +150,51 @@ fn wrapped_ty_name<'t>(ty: &'t Type) -> std::option::Option<(String, &'t Type)> 
     };
 
     std::option::Option::Some((ident.to_string(), ty))
+}
+
+fn collect_associated_types(
+    ty: &Type,
+    associated: &mut HashMap<String, Vec<proc_macro2::TokenStream>>,
+) {
+    match ty {
+        Type::Array(_) => { /* unimplemented!() */ }
+        Type::BareFn(_) => { /* unimplemented!() */ }
+        Type::Group(_) => { /* unimplemented!() */ }
+        Type::ImplTrait(_) => { /* unimplemented!() */ }
+        Type::Infer(_) => { /* unimplemented!() */ }
+        Type::Macro(_) => { /* unimplemented!() */ }
+        Type::Never(_) => { /* unimplemented!() */ }
+        Type::Paren(_) => { /* unimplemented!() */ }
+        Type::Path(TypePath {
+            qself: std::option::Option::None,
+            path: Path { segments, .. },
+            ..
+        }) => {
+            for PathSegment {
+                ident, arguments, ..
+            } in segments
+            {
+                if let Some(associated_list) = associated.get_mut(&ident.to_string()) {
+                    associated_list.push(segments.to_token_stream());
+                }
+
+                let PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) =
+                    arguments
+                else {
+                    continue;
+                };
+
+                if let std::option::Option::Some(GenericArgument::Type(ty)) = args.first() {
+                    collect_associated_types(ty, associated);
+                };
+            }
+        }
+        Type::Ptr(_) => { /* unimplemented!() */ }
+        Type::Reference(_) => { /* unimplemented!() */ }
+        Type::Slice(_) => { /* unimplemented!() */ }
+        Type::TraitObject(_) => { /* unimplemented!() */ }
+        Type::Tuple(_) => { /* unimplemented!() */ }
+        Type::Verbatim(_) => { /* unimplemented!() */ }
+        _ => unreachable!(),
+    }
 }

@@ -6,16 +6,14 @@
 // To run the code:
 //     $ cargo run
 use derive_debug::CustomDebug;
-use std::marker::PhantomData;
 
-type S = String;
+pub trait Trait {
+    type Value;
+}
 
 #[derive(CustomDebug)]
-pub struct Field<T> {
-    marker: PhantomData<T>,
-    string: S,
-    #[debug = "0b{:08b}"]
-    bitmask: u8,
+pub struct Field<T: Trait> {
+    values: Vec<T::Value>,
 }
 
 fn main() {}
